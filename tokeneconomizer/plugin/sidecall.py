@@ -40,6 +40,14 @@ so no extra API key is needed and the call is billed where the session is:
   * Antigravity: none. `agy` has no option that runs a turn without tools, and a side call's
     prompt holds text a repository controls, so its micro-skills keep to the LLM-free facts and
     its loop guard never asks a judge (`NO_SIDE_CALLS`).
+  * ZCode: `zcode -p` (the desktop app's own CLI, found on PATH or in the app bundle) with
+    `--json`, in a throwaway directory, on the person's default model -- the CLI publishes no
+    model flag -- with every acting tool removed (`--disallowed-tools`, the same lever the
+    desktop app uses per turn) and `TE_SIDECALL=1` keeping this plugin's hooks out of the
+    nested session. The call still carries ZCode's base prompt with every plugin and skill
+    loaded (~275k input tokens, none cached), and each call writes a session of its own into
+    ZCode's database, so it is OFF unless the person turns it on (`zcode_sidecall`, or
+    `TE_ZCODE_SIDECALL=1`).
   * Hermes: `hermes chat -Q --oneshot --source tool --ignore-rules --max-turns 1 -t bot_room` on
     the person's default model. Never `hermes -z`, which auto-approves dangerous commands: a side
     call's prompt holds text a repository controls, and this form offers it no tool. See
@@ -862,9 +870,78 @@ def droid_call(prompt, model="", cli="droid", timeout=TIMEOUT_S):
     return text, eff
 
 
+# The tools a ZCode side call removes (`--disallowed-tools`, comma-separated): every acting
+# tool, so the call only answers -- the same lever the desktop app itself uses per turn. A name
+# ZCode does not know is ignored rather than refused, so the list may outlive a rename.
+ZCODE_TOOLS = ("Bash,Read,Edit,Write,NotebookRead,NotebookEdit,Glob,Grep,Task,Agent,WebFetch,"
+               "WebSearch,Skill,AskUserQuestion,TodoWrite,TodoRead,ToolSearch,EnterPlanMode,"
+               "ExitPlanMode")
+
+# Where the desktop app keeps its CLI: `zcode` is not on PATH by default, and the file is a
+# `#!/usr/bin/env node` script, so it runs through the shebang wherever a node is installed.
+ZCODE_APP_CLI = "/Applications/ZCode.app/Contents/Resources/glm/zcode.cjs"
+
+
+def zcode_enabled(env=None):
+    """Whether `TE_ZCODE_SIDECALL` allows ZCode side calls; the `zcode_sidecall` setting does
+    the same from the config file. They are OFF by default: a call carries ZCode's whole base
+    prompt with every plugin and skill loaded (~275k input tokens, none cached) on the person's
+    plan, and writes a session of its own into ZCode's database, so a person enables them
+    knowingly."""
+    env = os.environ if env is None else env
+    return str(env.get("TE_ZCODE_SIDECALL") or "").strip().lower() in ("1", "true", "yes", "on")
+
+
+def zcode_cli(cli=None):
+    """The argv a ZCode side call starts: the given CLI, else `zcode` on PATH, else the desktop
+    app's bundled CLI. None when no candidate exists (the runner then stays off and the
+    LLM-free layer keeps learning)."""
+    for cand in (cli, shutil.which("zcode"),
+                 ZCODE_APP_CLI if os.access(ZCODE_APP_CLI, os.X_OK) else None):
+        if cand:
+            return [cand] if isinstance(cand, str) else list(cand)
+    return None
+
+
+def zcode_call(prompt, model="", cli=None, timeout=TIMEOUT_S):
+    """A text-only answer through `zcode -p --json`, in a throwaway directory with every acting
+    tool removed and this plugin's hooks off (`TE_SIDECALL`, from `_env`). The CLI publishes no
+    model flag, so the call runs on the person's default model and `model` only labels its
+    usage. A `--json` result carries the reply as `response` and its usage in provider units
+    (`inputTokens` with `cacheReadTokens`/`cacheWriteTokens` beside it)."""
+    argv = zcode_cli(cli)
+    if not argv:
+        raise RuntimeError("no zcode CLI found on PATH or in the app bundle")
+    cmd = [*argv, "--json", "--mode", "yolo", "--disallowed-tools", ZCODE_TOOLS]
+    with tempfile.TemporaryDirectory(prefix="te-side-", ignore_cleanup_errors=True) as cwd:
+        cmd += ["--cwd", cwd, "-p", prompt]
+        out = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8",
+                             errors="replace", timeout=timeout, env=_env(), cwd=cwd,
+                             stdin=subprocess.DEVNULL)
+    try:
+        data = json.loads(out.stdout or "{}")
+    except ValueError:
+        data = {}
+    data = data if isinstance(data, dict) else {}
+    text = str(data.get("response") or "").strip()
+    if not text:
+        _no_reply("zcode", out)
+        return "", None
+    u = data.get("usage") or {}
+    inp = int(u.get("inputTokens") or 0)
+    cached = int(u.get("cacheReadTokens") or 0)
+    cw = int(u.get("cacheWriteTokens") or 0)
+    eff, _ = accounting.effective({
+        "input_tokens": max(0, inp - cached - cw), "cache_read_input_tokens": cached,
+        "cache_creation_input_tokens": cw,
+        "output_tokens": int(u.get("outputTokens") or 0) + int(u.get("reasoningTokens") or 0),
+        "model": model or "zcode"})
+    return text, eff
+
+
 # The command each agent's side calls run, as the notices name it; the rest run `<agent> -p`.
 _CALLS = {"codex": "codex exec", "droid": "droid exec", "opencode": "opencode run",
-          "cursor": "cursor-agent -p", "hermes": "hermes chat"}
+          "cursor": "cursor-agent -p", "hermes": "hermes chat", "zcode": "zcode -p"}
 
 
 def call_name(host_name):
@@ -912,4 +989,12 @@ def _host_call(host_name, config):
         if not (droid_enabled() or getattr(config, "droid_sidecall", False)):
             return None
         return lambda prompt, _m="agent": droid_call(prompt, model=model)
+    if host_name == "zcode":
+        # Off unless the person turned it on, by the setting or the variable: see
+        # `zcode_enabled`. No runner means the free layer still learns; only the paid proposer
+        # and the judge wait.
+        if not (zcode_enabled() or getattr(config, "zcode_sidecall", False)):
+            return None
+        cli = zcode_cli(os.path.expanduser(config.zcode_cli) if config.zcode_cli else None)
+        return None if cli is None else lambda prompt, _m="agent": zcode_call(prompt, cli=cli)
     return lambda prompt, _m="agent": claude_call(prompt, model=model or "haiku", **kw)

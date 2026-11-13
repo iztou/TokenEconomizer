@@ -585,6 +585,9 @@ def _config_view(cfg):
                     "history_dirs": d.pop("history_dirs")},
         "droid": {"state": "on" if cfg.droid_sidecall else "off",
                   "droid_sidecall": d.pop("droid_sidecall")},
+        "zcode": {"state": "on" if cfg.zcode_sidecall else "off",
+                  "zcode_sidecall": d.pop("zcode_sidecall"),
+                  "zcode_cli": d.pop("zcode_cli")},
         "other": d,
         "warnings": cfg.warnings,
     }
@@ -625,7 +628,8 @@ def cmd_config(args):
     print(f"{path}: {json.dumps(cur, sort_keys=True)}")
     print("applies from the next hook call; a new fact-size cap applies once the next session "
           "has been folded")
-    if {canonical(k) for k in updates} & {"microskills", "loopguard", "droid_sidecall"} and sidecall.resume(
+    if {canonical(k) for k in updates} & {"microskills", "loopguard", "droid_sidecall",
+                                          "zcode_sidecall"} and sidecall.resume(
             ctx.host.name, ctx.root):
         print(f"the plugin's model calls through `{sidecall.call_name(ctx.host.name)}` will be "
               f"tried again")
@@ -814,14 +818,24 @@ def cmd_doctor(args):
         print(f"state root  {root} NOT writable: {e}")
         ok = False
     import shutil as _sh
+    from .. import trace as _trace
+
+    def _zcode_present():
+        con = _trace.zcode_connect()          # one read-only probe, closed at once
+        if con is None:
+            return False
+        con.close()
+        return True
     # Only the agents installed here: a Codex-only machine has no Claude Code catalog to probe.
+    # ZCode has no PATH binary (a desktop app): its session database is the marker.
     agents = [h for h in ("antigravity", "claude", "codex", "copilot", "droid", "grok", "hermes",
-                          "opencode", "pi")
-              if _sh.which(sidecall.claude_cli() if h == "claude" else
-                           sidecall.hermes_cli() if h == "hermes" else
-                           "agy" if h == "antigravity" else h)]
+                          "opencode", "pi", "zcode")
+              if (_zcode_present() if h == "zcode" else
+                  _sh.which(sidecall.claude_cli() if h == "claude" else
+                            sidecall.hermes_cli() if h == "hermes" else
+                            "agy" if h == "antigravity" else h))]
     print("agents      " + (', '.join(agents) or 'none of antigravity (agy), claude, codex, '
-                             'copilot, droid, grok, hermes, opencode, pi on PATH'))
+                             'copilot, droid, grok, hermes, opencode, pi, zcode on PATH'))
     ctx = _ctx(args)          # the per-agent lines below read the settings in effect
     for h in agents:
         pause = sidecall.paused(h, root)
@@ -867,6 +881,20 @@ def cmd_doctor(args):
             side = ("off (set `droid_sidecall=on` or TE_DROID_SIDECALL=1 to try them)")
         print(f"droid       sessions {sessions}; side calls {side}; tool pruning is not "
               f"available in the TUI")
+    if "zcode" in agents:
+        cli = sidecall.zcode_cli(os.path.expanduser(ctx.config.zcode_cli)
+                                 if ctx.config.zcode_cli else None)
+        named = (f"{ctx.config.zcode_cli} (the `zcode_cli` setting)" if ctx.config.zcode_cli
+                 else "zcode on PATH, or the app bundle's")
+        if getattr(ctx.config, "zcode_sidecall", False):
+            side = "on (the `zcode_sidecall` setting)"
+        elif sidecall.zcode_enabled():
+            side = "on (TE_ZCODE_SIDECALL=1)"
+        else:
+            side = ("off (set `zcode_sidecall=on` or TE_ZCODE_SIDECALL=1 to try them; each "
+                    "call carries ZCode's whole base prompt, ~275k input tokens)")
+        print(f"zcode       CLI {'found: ' + named if cli else 'not found (' + named + ')'}; "
+              f"side calls {side}; tool pruning is not available (MCP tools lazy-load here)")
     if "hermes" in agents:
         link = os.path.join(sidecall.hermes_home(), "plugins", "tokeneconomizer")
         print(f"hermes      plugin {'linked at ' + link if os.path.exists(link) else 'not in ' + link}"

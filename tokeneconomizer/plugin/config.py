@@ -57,6 +57,11 @@ person can tune by hand:
   * droid_sidecall              -- on Droid, allow the plugin's own model calls. They run
                                    `droid exec`, which writes a session log of its own, so this
                                    is off by default: `microskills=envfacts` learns without it;
+  * zcode_sidecall, zcode_cli   -- on ZCode, the same switch and the `zcode` the calls run. A
+                                   call carries the whole base prompt (~275k input tokens,
+                                   none cached) and writes a session into ZCode's database, so
+                                   it too is off by default; the CLI is found on PATH or in
+                                   the app bundle when `zcode_cli` is empty;
   * history_import              -- on Claude Code, fold a repository's sessions from before the
                                    plugin (Claude Code's own logs) once, at its first session
                                    start, when nothing is folded there yet. Off by default:
@@ -196,6 +201,8 @@ class LiveConfig:
     pi_cli: str = ""
     hermes_cli: str = ""
     droid_sidecall: bool = False
+    zcode_sidecall: bool = False
+    zcode_cli: str = ""
     history_import: bool = False
     history_max_sessions: int = 200
     history_days: int = 365
@@ -326,7 +333,7 @@ _ENV = {"TE_MODE": "mode", "TE_SHADOW": "shadow",
         "TE_REPOMAP": "repomap", "TE_REPOMAP_TOKENS": "repomap_tokens",
         "TE_REPOMAP_PYTHON": "repomap_python", "TE_REPOMAP_TIMEOUT": "repomap_timeout",
         "TE_PI_EXTENSIONS": "pi_extensions", "TE_PI_CLI": "pi_cli",
-        "TE_HERMES_CLI": "hermes_cli",
+        "TE_HERMES_CLI": "hermes_cli", "TE_ZCODE_CLI": "zcode_cli",
         "TE_HISTORY_IMPORT": "history_import", "TE_HISTORY_MAX_SESSIONS": "history_max_sessions",
         "TE_HISTORY_DAYS": "history_days", "TE_HISTORY_DIRS": "history_dirs"}
 _ENV_THRESHOLDS = ("TE_SPIRAL_THRESHOLDS", "TE_LOOPGUARD_THRESHOLDS")
