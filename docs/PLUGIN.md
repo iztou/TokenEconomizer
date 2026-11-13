@@ -720,6 +720,55 @@ was not.)
   call also writes a session log of its own, so side calls stay off until `droid_sidecall` is
   on (or `TE_DROID_SIDECALL=1`).
 
+### ZCode (3.17.2, one install, 2026-11-12)
+
+Written against the ZCode desktop app; the probe record lives in
+[`ZCODE.md`](ZCODE.md). What was verified, all read-only against the running app:
+
+* **Sessions are database rows, not files.** `~/.zcode/cli/db/db.sqlite` (487 sessions read)
+  holds `session` (`id` = `sess_...`, `directory`, `parent_id`, epoch-ms times), `message`
+  (`data` JSON: `role`; `semantics.kind` distinguishes `user_prompt` from `system_reminder`/
+  `todo_reminder`/`background_notification`/`compact_summary`/`fork_notice`), `part`
+  (`text`/`reasoning`/`step-start`/`step-finish`/`tool`; a `tool` part carries `callID`,
+  `tool`, `state.input`, `state.output`, `state.status`), and `model_usage` (the four token
+  counts per completed model call). The older `~/.zcode/v2/db.sqlite` is 0 bytes on this
+  install; both are probed, opened read-only (`file:...?mode=ro`). `tests/test_zcode.py`
+  covers the reader, the host adapter and the bundle against a synthetic copy of that schema.
+* **Tool names are Claude's.** Measured over the live `tool_usage` table: `Bash` (10,145),
+  `Edit`, `Read`, `WebFetch`, `Write`, `TodoWrite`, `ToolSearch`, `AskUserQuestion`, `Skill`,
+  `mcp__*`. The adapter reads `Agent` as `Task` and `ApplyPatch` as `Edit`.
+* **The tool shells carry the session.** A shell inside ZCode exports `ZCODE_SESSION_ID`,
+  `CLAUDE_SESSION_ID` and `CLAUDE_CODE_SESSION_ID` (all `sess_...`), so `te` inside ZCode
+  names its host without `--host`.
+* **Plugin format.** Installed official plugins are a `package.json` manifest plus
+  `hooks/hooks.json` in the Claude shape (`type: command`, `timeout`, `${CLAUDE_PLUGIN_ROOT}`
+  commands, `matcher` fields); registries are `known_marketplaces.json` and
+  `installed_plugins.json` under `~/.zcode/cli/plugins`. The bundle `build_plugin.py --zcode`
+  writes follows that layout, with the five-event `${ZCODE_PLUGIN_ROOT}` hook file.
+* **The history import reads the same database.** `te --host zcode history import` lists a
+  repository's earlier sessions (a `parent_id` names a sub-workflow session, left out as
+  Droid's subagents are) and exports each, on demand, as Claude transcript lines under the
+  state root; every exported line carries the session's `cwd`, id and an ISO `timestamp`, so
+  Claude Code's own readers (head, prompt count, prompt-turns) read it unchanged. Pricing
+  comes from the `model_usage` rows of the same database the export was read from (the
+  session record carries a non-default database's path, as Hermes carries its home).
+* **Hooks resolve once per session start, and are off by default.** Every
+  `bootstrap.app.startup.plugins.completed` record on this machine logged `hookCount: 0`
+  although an enabled plugin ships a `SessionStart` hook — consistent with the configuration
+  file's `hooks.enabled` gate. `turn.phase` records in `~/.zcode/cli/log/*.jsonl` and
+  `"phase":"hooks"` in `~/.zcode/v2/logs/*.log` show hooks preparing per turn.
+
+What is **not verified live**, because a running session never re-resolves its hooks and no new
+session started while the probe was in place: a plugin hook firing; the payload's key set
+(`session_id`, `transcript_path`, `cwd`, `tool_name`, `tool_input`, `tool_response`, any
+turn/prompt identity); the accepted context shape (the adapter ships Claude's nested
+`hookSpecificOutput.additionalContext`; `Zcode.context()` is the one place to flip to a
+top-level `additionalContext`, as Copilot needed); that an injected fact reaches a live ZCode
+model. Hence: no `SessionEnd`, so a conversation is folded by the next session start in its
+repository (the Antigravity arrangement); tool pruning not available (MCP tools lazy-loaded);
+and no side call (`NO_SIDE_CALLS`, no verified headless entry point), so the paid proposer and
+the judge wait and `microskills=envfacts` plus the rule backstop do the work.
+
 ## 4. State and privacy
 
 All state is local, under `$TOKENECONOMIZER_HOME` (default `~/.tokeneconomizer`), one directory

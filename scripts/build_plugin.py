@@ -120,6 +120,87 @@ def build_droid(out):
     return plugin_out
 
 
+def build_zcode(out):
+    """The same bundle laid out as a native ZCode plugin (`plugin/package.json` manifest,
+    `hooks/hooks.json` for its Claude-format hook file, `${ZCODE_PLUGIN_ROOT}` commands).
+
+    ZCode loads `hooks/hooks.json` in the Claude shape but has no `SessionEnd`, and its output
+    schema is strict, so the bundle ships the five-event `hooks/zcode-hooks.json` in its place;
+    the other agents' manifests would make the same directory look like a Claude, Codex, Pi or
+    Droid plugin too. The upstream files stay as they are: only the bundle is rewritten.
+
+    Two manifests make it visible (verified 2026-11-13 in the ZCode 3.17.2 bundle): the plugin
+    manifest `.zcode-plugin/plugin.json` — the app reads name/version/description from it
+    (`package.json` is not a plugin manifest) and refuses a plugin source that lacks it — and
+    the marketplace root's `marketplace.json`, which the app's plugin list enumerates."""
+    out = os.path.abspath(out)
+    plugin_out = os.path.join(out, "tokeneconomizer")
+    if os.path.exists(plugin_out):
+        shutil.rmtree(plugin_out)
+    shutil.copytree(os.path.join(REPO, "plugin"), plugin_out,
+                    ignore=shutil.ignore_patterns(
+                        "__pycache__", "*.pyc", ".pytest_cache", "lib", ".DS_Store",
+                        ".claude-plugin", ".codex-plugin", ".cursor-plugin", ".github",
+                        ".antigravity-plugin", ".factory-plugin", "hooks.json",
+                        "codex-skills", "hermes", "opencode", "pi", "slash-commands",
+                        "package.json", "*.md.bak"))
+    shutil.copytree(os.path.join(REPO, "tokeneconomizer"),
+                    os.path.join(plugin_out, "lib", "tokeneconomizer"), ignore=IGNORE)
+    # ZCode's hook file: the five events it runs, `--host zcode`, `${ZCODE_PLUGIN_ROOT}`.
+    shutil.copyfile(os.path.join(REPO, "plugin", "hooks", "zcode-hooks.json"),
+                    os.path.join(plugin_out, "hooks", "hooks.json"))
+    for name in ("droid-hooks.json", "codex-hooks.json", "copilot-hooks.json",
+                 "cursor-hooks.json", "zcode-hooks.json"):   # other agents' hook files
+        stale = os.path.join(plugin_out, "hooks", name)
+        if os.path.exists(stale):
+            os.remove(stale)
+    with open(os.path.join(plugin_out, "package.json"), "w", encoding="utf-8") as fh:
+        json.dump({
+            "name": "@zcode/tokeneconomizer-plugin",
+            "version": "0.1.0",
+            "private": True,
+            "license": "Apache-2.0",
+            "description": "TokenEconomizer for ZCode: learned repository facts injected at "
+                           "session start, session cost from ZCode's own usage, and a guard "
+                           "for turns stuck in a failing loop.",
+            "keywords": ["cost", "tokens", "context", "hooks"],
+        }, fh, indent=2)
+        fh.write("\n")
+    # The plugin manifest the app itself reads (mirrored in the Claude location, as the
+    # official plugins do).
+    plugin_manifest = {
+        "name": "tokeneconomizer",
+        "version": "0.1.0",
+        "description": "TokenEconomizer for ZCode: learned repository facts injected at "
+                       "session start, session cost from ZCode's own usage, and a guard "
+                       "for turns stuck in a failing loop.",
+        "author": {"name": "TokenEconomizer contributors"},
+        "license": "Apache-2.0",
+        "keywords": ["cost", "tokens", "context", "hooks"],
+    }
+    for dirname in (".zcode-plugin", ".claude-plugin"):
+        os.makedirs(os.path.join(plugin_out, dirname), exist_ok=True)
+        with open(os.path.join(plugin_out, dirname, "plugin.json"), "w",
+                  encoding="utf-8") as fh:
+            json.dump(plugin_manifest, fh, indent=2)
+            fh.write("\n")
+    # The marketplace manifest at the bundle root: the app looks for <root>/marketplace.json
+    # (or .claude-plugin/marketplace.json) and enumerates its plugins[].
+    os.makedirs(out, exist_ok=True)
+    with open(os.path.join(out, "marketplace.json"), "w", encoding="utf-8") as fh:
+        json.dump({
+            "name": "tokeneconomizer-zcode",
+            "version": 1,
+            "description": "TokenEconomizer marketplace for ZCode",
+            "owner": {"name": "TokenEconomizer authors"},
+            "plugins": [{"name": "tokeneconomizer", "version": "0.1.0",
+                         "description": plugin_manifest["description"],
+                         "source": "./tokeneconomizer"}],
+        }, fh, indent=2)
+        fh.write("\n")
+    return plugin_out
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -127,12 +208,18 @@ def main(argv=None):
     ap.add_argument("--droid", action="store_true",
                     help="write a Factory Droid marketplace instead "
                          "(default <out>: dist/tokeneconomizer-droid)")
+    ap.add_argument("--zcode", action="store_true",
+                    help="write a ZCode plugin bundle instead (default <out>: "
+                         "dist/tokeneconomizer-zcode)")
     ap.add_argument("--zip", action="store_true",
                     help="also write <out>/../tokeneconomizer-plugin.zip of the plugin directory")
     args = ap.parse_args(argv)
     if args.droid and args.out == os.path.join(REPO, "dist", "marketplace"):
         args.out = os.path.join(REPO, "dist", "tokeneconomizer-droid")
-    plugin_out = build_droid(args.out) if args.droid else build(args.out)
+    if args.zcode and args.out == os.path.join(REPO, "dist", "marketplace"):
+        args.out = os.path.join(REPO, "dist", "tokeneconomizer-zcode")
+    plugin_out = (build_droid(args.out) if args.droid else
+                  build_zcode(args.out) if args.zcode else build(args.out))
     print(f"plugin bundle: {plugin_out}")
     print(f"marketplace:   {os.path.abspath(args.out)}")
     if args.zip:

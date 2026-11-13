@@ -70,7 +70,7 @@ mechanisms:
 
 TokenEconomizer is a plugin for **Claude Code**, **Codex**, the **GitHub Copilot CLI** and **Pi**,
 with experimental support for **opencode**, **Cursor Agent**, **Grok Build**, **Hermes Agent**,
-the **Antigravity CLI** and **Factory Droid**. Each italic
+the **Antigravity CLI**, **Factory Droid** and **ZCode**. Each italic
 letter above is a setting, shown with its default ([Settings](#settings)), and each mechanism can be turned on or
 off. The plugin announces each action in one line, and if any part of it fails, your session
 carries on as if it were not installed. Its model calls (the fact proposer, and the judge with the
@@ -231,6 +231,26 @@ and tool pruning is not available. macOS and Linux only:
 on Windows `agy` runs hook commands through `cmd /c`, and this plugin's launcher is a POSIX shell
 script. See [its limits](plugin/README.md#antigravity-cli).
 
+**ZCode** (experimental; micro-skills' LLM-free facts, the loop guard's rule backstop and
+session cost)
+
+```sh
+git clone https://github.com/microsoft/TokenEconomizer.git
+cd TokenEconomizer
+python scripts/build_plugin.py --zcode      # dist/tokeneconomizer-zcode/tokeneconomizer
+```
+
+Install the built directory as a ZCode plugin and enable it (one machine did it by hand:
+`~/.zcode/cli/plugins/cache/local/tokeneconomizer/<version>/`, plus entries in
+`installed_plugins.json`, `known_marketplaces.json` and `plugins.enabledPlugins`), then start a
+new ZCode session and check with `~/.tokeneconomizer/bin/te --host zcode status`. ZCode has no
+`SessionEnd`, so a conversation is folded by the next session start in its repository; tool
+pruning is not available (MCP tools are lazy-loaded there); and the plugin makes no model call
+through ZCode, whose hooks have not seen a verified headless entry point, so the paid proposer
+and the loop guard's judge are off and `microskills=envfacts` is the way to learn. Sessions are
+priced from ZCode's own `model_usage` rows. See [its limits](plugin/README.md#zcode) and
+[`docs/ZCODE.md`](docs/ZCODE.md).
+
 **opencode** (experimental)
 
 ```sh
@@ -268,6 +288,7 @@ To update:
 |---|---|
 | Claude Code, Copilot CLI, opencode | `git pull` in the clone |
 | Factory Droid | `git pull` in the clone, then the `build_plugin.py --droid` and install lines again |
+| ZCode | `git pull` in the clone, then the `build_plugin.py --zcode` build and the install lines again |
 | Hermes Agent | `git pull` in the clone, then `hermes gateway restart` |
 | Antigravity CLI | build the bundle again and `agy plugin install` it |
 | Codex | `git pull` in the clone, then the `codex plugin add` line again |
@@ -290,6 +311,7 @@ uninstalling, using Copilot with your own model key, and troubleshooting.
 | Hermes Agent (experimental) | 0.22.5 | not tested |
 | Antigravity CLI (experimental) | agy 1.5.1, macOS and Linux | not tested |
 | Factory Droid (experimental) | 0.233.0, macOS (below) | not tested |
+| ZCode (experimental) | 3.17.2 (the one install observed; below) | not tested |
 
 The commands above were tested on the oldest and newest version in each range; newer versions
 have not been tested yet.
@@ -325,6 +347,18 @@ have not been tested yet.
   repeated it). Droid's TUI has no persistent per-tool setting (Factory issue #65), so tool
   pruning is not available; its session logs are read for micro-skills and the loop guard, and
   priced from the usage Droid writes beside each log. See [its notes](docs/DROID.md).
+- **ZCode** support is experimental: it was written on 2026-11-12 against one install
+  (3.17.2, macOS). ZCode documents the Claude-format hooks this adapter uses and its session
+  database was read directly, but no live hook has fired under the plugin yet: a session's
+  hooks resolve at its start, and none started while the probe was in place. What a session
+  sends, the accepted context shape and the configuration file's `hooks.enabled` switch are
+  listed as unverified in [`docs/ZCODE.md`](docs/ZCODE.md), with the probe evidence. There is
+  no `SessionEnd`, so a conversation is folded by the next session start in its repository;
+  tool pruning is not available (MCP tools are lazy-loaded); and the plugin makes no model call
+  through ZCode (no verified headless entry point), so the paid proposer and the judge are off
+  and `microskills=envfacts` is the way to learn. A repository's earlier sessions are imported
+  like Claude Code's own logs — read from the session database, exported on demand, priced from
+  its `model_usage` rows.
 
 ### Everyday commands
 
@@ -342,6 +376,7 @@ commands. They have the same names on every agent; only the way you type them di
 | Hermes Agent | from a terminal: `~/.tokeneconomizer/bin/te --host hermes <command>` |
 | Antigravity CLI | from a terminal: `~/.tokeneconomizer/bin/te --host antigravity <command>` |
 | Factory Droid | `/tokeneconomizer-<command>` (e.g. `/tokeneconomizer-status`) |
+| ZCode | from a terminal: `~/.tokeneconomizer/bin/te --host zcode <command>` |
 | a terminal, in the repository | `~/.tokeneconomizer/bin/te <command>` |
 
 | Command | What it does |
@@ -440,6 +475,7 @@ what it can leave out differs:
 | Hermes Agent | nothing yet | — |
 | Antigravity CLI | nothing yet | — |
 | Factory Droid | nothing (no persistent per-tool setting in the TUI) | — |
+| ZCode | nothing (MCP tools are lazy-loaded; not available) | — |
 
 Tool pruning adds only its own entries and never touches deny rules you wrote; a settings file it
 creates is kept out of git (`.git/info/exclude`). On Claude Code, the session-start line that says
@@ -476,6 +512,11 @@ Where that line appears, and how to stop the turn, in the terminal UI and in a h
 | opencode | as a notification | Esc | on stderr | Ctrl+C |
 | Hermes Agent | in the model's reply | Ctrl+C | in the final reply | Ctrl+C |
 | Factory Droid | in the model's reply | Interrupt the agent | in the final reply | Ctrl+C |
+| ZCode | in the model's reply (notices go through the model) | not tested | not tested | Ctrl+C |
+
+- **ZCode**: no display channel for a hook's notice has been verified, so the model passes it
+  on, as on Droid; whether the desktop UI offers an interrupt is untested. With the guard's
+  judge off on this host (no verified side call), only the rule backstop ever writes the line.
 
 - **Claude Code** shows a plugin's own lines only in its detailed transcript (Ctrl+O), so the
   plugin asks Claude to repeat this one in its reply; the model may word it differently or leave
@@ -501,7 +542,7 @@ agent's own limits; afterwards, `te status` counts the redirects and "still stuc
 | [`tokeneconomizer/plugin`](tokeneconomizer/plugin/) | The runtime the hooks and the `te` command run |
 | [`plugin`](plugin/) | The installable plugin: manifests, hook files, launchers, slash commands, the Pi extension, the opencode and Hermes plugins, the Droid bundle (`.factory-plugin/`) |
 | [`experiments`](experiments/) | The harness, launchers and task sets behind the paper's results |
-| [`docs`](docs/) | `PLUGIN.md` (design, verified agent behavior), `ARCHITECTURE.md` (how the package fits together) and `DROID.md` (the Factory Droid adapter) |
+| [`docs`](docs/) | `PLUGIN.md` (design, verified agent behavior), `ARCHITECTURE.md` (how the package fits together), `DROID.md` (the Factory Droid adapter) and `ZCODE.md` (the ZCode adapter) |
 | [`tests`](tests/) | Offline tests for the package and the plugin |
 
 The package is standard-library only. Run the tests with `python -m pytest tests` (add

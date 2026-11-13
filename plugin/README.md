@@ -2,14 +2,14 @@
 
 How to install and use TokenEconomizer in Claude Code, Codex, the GitHub Copilot CLI, Pi, Cursor
 (experimental), Grok Build (experimental), opencode (experimental), Hermes Agent (experimental),
-the Antigravity CLI (experimental) and Factory Droid (experimental). What the plugin does and
-why is in the [main README](../README.md); its design and the verified behaviour of each agent are
-in [`docs/PLUGIN.md`](../docs/PLUGIN.md).
+the Antigravity CLI (experimental), Factory Droid (experimental) and ZCode (experimental). What
+the plugin does and why is in the [main README](../README.md); its design and the verified
+behaviour of each agent are in [`docs/PLUGIN.md`](../docs/PLUGIN.md).
 
 - [Before you start](#before-you-start)
 - Install and use it on [Claude Code](#claude-code) · [Codex](#codex) ·
   [Copilot CLI](#copilot-cli) · [Pi](#pi) · [Cursor](#cursor) · [Grok Build](#grok-build) · [opencode](#opencode) ·
-  [Hermes Agent](#hermes-agent) · [Antigravity CLI](#antigravity-cli) · [Factory Droid](#factory-droid)
+  [Hermes Agent](#hermes-agent) · [Antigravity CLI](#antigravity-cli) · [Factory Droid](#factory-droid) · [ZCode](#zcode)
 - [What to expect](#what-to-expect) · [Commands](#commands) · [Settings](#settings)
 - [Repository map](#repository-map) · [Using with rtk](#using-with-rtk) ·
   [Model calls and API keys](#model-calls-and-api-keys) · [Troubleshooting](#troubleshooting)
@@ -626,6 +626,63 @@ Droid has no setting for none at all. With it off, `microskills=envfacts` still 
 (`bb18c4fc`) received the 793-character block as `hookSpecificOutput.additionalContext`, and the
 model repeated it verbatim. The hook output is covered by tests; Droid appending it to the
 model's context has now been observed.
+
+## ZCode
+
+Experimental: **micro-skills' LLM-free facts, the loop guard's rule backstop and session cost**,
+written on 2026-11-12 against one install (3.17.2, macOS). Full notes and the probe record are
+in [`docs/ZCODE.md`](../docs/ZCODE.md).
+
+**1. Install.** Build the ZCode bundle (it copies the package into `lib/`) and install it as a
+ZCode plugin, then enable it in `~/.zcode/cli/config.json`:
+
+```sh
+python scripts/build_plugin.py --zcode    # dist/tokeneconomizer-zcode/tokeneconomizer
+```
+
+**2. Check it.** Start a new ZCode session (its hooks resolve at the session's start), send a
+prompt in a repository, and run `~/.tokeneconomizer/bin/te --host zcode status` from a terminal.
+ZCode loads no plugin commands, so every command runs from a terminal, typed as
+`te --host zcode <command>`.
+
+**How it works, and what it does not do.**
+
+- Five hooks are registered, in the Claude format ZCode loads: `SessionStart` (injects the
+  learned facts), `UserPromptSubmit`, `PostToolUse`, `PostToolUseFailure` and `Stop`
+  (`plugin/hooks/zcode-hooks.json`, `${ZCODE_PLUGIN_ROOT}` commands). `PreToolUse` and
+  `PermissionRequest` are events ZCode documents but the plugin needs none of them, and the
+  fewer hooks registered the smaller the surface of ZCode's strict output schema (an unknown
+  output key rejects the whole output).
+- There is **no `SessionEnd`**: a conversation is folded by the next session start in its
+  repository once it has been quiet for 10 minutes, exactly as on the Antigravity CLI.
+- The session body is not a file the hook names: every conversation lives as rows of the sqlite
+  database `~/.zcode/cli/db/db.sqlite` (the `~/.zcode/v2/db.sqlite` the older surface names
+  stays empty on current installs; both are probed, read-only). The fold exports the session as
+  Claude transcript lines and prices it from the database's `model_usage` rows; a model no price
+  table names is labelled `fallback`. A busy or unreadable database leaves the session for a
+  later start (retried up to 7 days, then recorded as unreadable).
+- **Tool pruning is not available** (MCP tools are lazy-loaded there), and **the plugin makes no
+  model call through ZCode**: no headless entry point has been verified that runs a prompt with
+  every tool off and nothing left behind. So the paid fact proposer and the loop guard's judge
+  are off (`NO_SIDE_CALLS`, as on Antigravity); `microskills=envfacts` still learns, and the
+  guard still redirects at its rule-based backstop and then tells you how to stop the turn.
+- No display channel for a hook's notice has been verified, so a notice goes through the model,
+  as on Droid. Whether `UserPromptSubmit`'s context reaches the model is unverified, so the
+  repository map is injected at `SessionStart` and `prompt_context` is off.
+- **The database is also the history import's source.** `te --host zcode history import` lists
+  the repository's earlier sessions in the database and exports each, on demand, as Claude
+  transcript lines under `~/.tokeneconomizer/zcode-sessions/`; sub-workflow sessions (a
+  `parent_id`) are left out, as Droid's subagents are. No model call, and no deny list is
+  written — the same one-time import as the other hosts'.
+- **Verified so far** (read-only, 2026-11-12): the session database's shape (487 sessions
+  read), the tool-shell markers ZCode exports (`ZCODE_SESSION_ID`/`CLAUDE_SESSION_ID`), the
+  installed plugins' manifest and hook-file format, the hook-execution records in `~/.zcode`'s
+  logs, and that hooks resolve per session start with `hooks.enabled` off by default.
+  **Not yet verified live:** a plugin hook firing, the payload's key set, the accepted
+  `additionalContext` shape, and a fact reaching a live ZCode model — a running session never
+  re-resolves its hooks, and no new session started while the probe was in place. See
+  [`docs/ZCODE.md`](../docs/ZCODE.md) for the probe record and `ZCODE_VERIFY.md` in the
+  repository root for what to check on a fresh session.
 
 ## What to expect
 
