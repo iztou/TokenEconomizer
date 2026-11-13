@@ -135,7 +135,9 @@ def build_zcode(out):
     ZCode loads `hooks/hooks.json` in the Claude shape but has no `SessionEnd`, and its output
     schema is strict, so the bundle ships the five-event `hooks/zcode-hooks.json` in its place;
     the other agents' manifests would make the same directory look like a Claude, Codex, Pi or
-    Droid plugin too. The upstream files stay as they are: only the bundle is rewritten.
+    Droid plugin too. The upstream files stay as they are: only the bundle is rewritten. The
+    hook commands run through `sh` (the file carries +x in git, but a GitHub-source install
+    may land without the executable bit -- verified 2026-11-13: hook.run.failed, exit 126).
 
     Two manifests make it visible (verified 2026-11-13 in the ZCode 3.17.2 bundle): the plugin
     manifest `.zcode-plugin/plugin.json` — the app reads name/version/description from it
