@@ -30,6 +30,14 @@ import sys
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 IGNORE = shutil.ignore_patterns("__pycache__", "*.pyc", ".pytest_cache", ".DS_Store")
 
+# The ZCode bundle's own version and description, the one place both manifests and the
+# marketplace entry take them from. Bump the version for a release: a marketplace update
+# shows only when the version moves.
+ZCODE_VERSION = "0.1.0"
+ZCODE_DESCRIPTION = (
+    "TokenEconomizer for ZCode: learned repository facts injected at session start, "
+    "session cost from ZCode's own usage, and a guard for turns stuck in a failing loop.")
+
 
 def build(out):
     out = os.path.abspath(out)
@@ -132,7 +140,11 @@ def build_zcode(out):
     Two manifests make it visible (verified 2026-11-13 in the ZCode 3.17.2 bundle): the plugin
     manifest `.zcode-plugin/plugin.json` — the app reads name/version/description from it
     (`package.json` is not a plugin manifest) and refuses a plugin source that lacks it — and
-    the marketplace root's `marketplace.json`, which the app's plugin list enumerates."""
+    the marketplace root's `marketplace.json`, which the app's plugin list enumerates. Its
+    `name` must equal the marketplace id, which for a GitHub source is the repository name:
+    the published channel is `tokeneconomizer-zcode`, so that is the name here too. Version
+    comes from the one constant; bump it for a release (a marketplace update only shows when
+    the version moves)."""
     out = os.path.abspath(out)
     plugin_out = os.path.join(out, "tokeneconomizer")
     if os.path.exists(plugin_out):
@@ -157,12 +169,10 @@ def build_zcode(out):
     with open(os.path.join(plugin_out, "package.json"), "w", encoding="utf-8") as fh:
         json.dump({
             "name": "@zcode/tokeneconomizer-plugin",
-            "version": "0.1.0",
+            "version": ZCODE_VERSION,
             "private": True,
             "license": "Apache-2.0",
-            "description": "TokenEconomizer for ZCode: learned repository facts injected at "
-                           "session start, session cost from ZCode's own usage, and a guard "
-                           "for turns stuck in a failing loop.",
+            "description": ZCODE_DESCRIPTION,
             "keywords": ["cost", "tokens", "context", "hooks"],
         }, fh, indent=2)
         fh.write("\n")
@@ -170,12 +180,12 @@ def build_zcode(out):
     # official plugins do).
     plugin_manifest = {
         "name": "tokeneconomizer",
-        "version": "0.1.0",
-        "description": "TokenEconomizer for ZCode: learned repository facts injected at "
-                       "session start, session cost from ZCode's own usage, and a guard "
-                       "for turns stuck in a failing loop.",
+        "version": ZCODE_VERSION,
+        "description": ZCODE_DESCRIPTION,
         "author": {"name": "TokenEconomizer contributors"},
         "license": "Apache-2.0",
+        "homepage": "https://github.com/microsoft/TokenEconomizer",
+        "repository": "https://github.com/microsoft/TokenEconomizer",
         "keywords": ["cost", "tokens", "context", "hooks"],
     }
     for dirname in (".zcode-plugin", ".claude-plugin"):
@@ -185,7 +195,9 @@ def build_zcode(out):
             json.dump(plugin_manifest, fh, indent=2)
             fh.write("\n")
     # The marketplace manifest at the bundle root: the app looks for <root>/marketplace.json
-    # (or .claude-plugin/marketplace.json) and enumerates its plugins[].
+    # (or .claude-plugin/marketplace.json) and enumerates its plugins[]. Presentation fields
+    # (displayName, i18n, categories) are the marketplace entry's; the icon is omitted rather
+    # than fabricated (the spec says to omit absent assets).
     os.makedirs(out, exist_ok=True)
     with open(os.path.join(out, "marketplace.json"), "w", encoding="utf-8") as fh:
         json.dump({
@@ -193,8 +205,15 @@ def build_zcode(out):
             "version": 1,
             "description": "TokenEconomizer marketplace for ZCode",
             "owner": {"name": "TokenEconomizer authors"},
-            "plugins": [{"name": "tokeneconomizer", "version": "0.1.0",
-                         "description": plugin_manifest["description"],
+            "plugins": [{"name": "tokeneconomizer", "version": ZCODE_VERSION,
+                         "description": ZCODE_DESCRIPTION,
+                         "displayName": "TokenEconomizer",
+                         "displayName_i18n": {"zh-CN": "TokenEconomizer"},
+                         "description_i18n": {"zh-CN":
+                             "跨会话学习仓库事实并在会话启动时注入;按 ZCode 自身的用"
+                             "量表为每个会话记账;失败循环守卫。上游 microsoft/"
+                             "TokenEconomizer 的 ZCode 移植,Apache-2.0。"},
+                         "categories": ["developer-tools"],
                          "source": "./tokeneconomizer"}],
         }, fh, indent=2)
         fh.write("\n")
