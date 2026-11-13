@@ -1,0 +1,77 @@
+name: release-zcode
+
+# The publish channel for the ZCode plugin: tests, builds the bundle, and force-pushes
+# it to iztou/tokeneconomizer-zcode (the marketplace users add). The channel's copy of
+# README.md comes from .github/channel-README.md here, and the patch version becomes the
+# run number, so every push to `zcode` yields a version a marketplace refresh can see.
+on:
+  push:
+    branches: [zcode]
+    paths: ['tokeneconomizer/**', 'plugin/**', 'scripts/build_plugin.py',
+            '.github/workflows/release-zcode.yml', '.github/channel-README.md']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Tests
+        run: python -m pytest tests -q
+      - name: Build the bundle
+        run: python scripts/build_plugin.py --zcode
+      - name: Stamp the run number as the patch version
+        run: |
+          python - dist/tokeneconomizer-zcode "$GITHUB_RUN_NUMBER" <<'EOF'
+          import json, sys
+          root, n = sys.argv[1], sys.argv[2]
+          paths = ["marketplace.json",
+                   "tokeneconomizer/.zcode-plugin/plugin.json",
+                   "tokeneconomizer/.claude-plugin/plugin.json",
+                   "tokeneconomizer/package.json"]
+          for rel in paths:
+              p = f"{root}/{rel}"
+              d = json.load(open(p))
+              if rel == "marketplace.json":
+                  d["plugins"][0]["version"] = f"0.1.{n}"
+              else:
+                  d["version"] = f"0.1.{n}"
+              json.dump(d, open(p, "w"), indent=2, ensure_ascii=False)
+              open(p, "a").write("\n")
+          print(f"stamped 0.1.{n}")
+          EOF
+      - name: Validate with the ZCode CLI schema
+        run: |
+          # The validator needs the zcode CLI, which is not on the runner. The manifests
+          # were validated at write time; this step is the bundle's own structural check.
+          python - - dist/tokeneconomizer-zcode <<'EOF'
+          import json, sys, os
+          root = sys.argv[1]
+          m = json.load(open(f"{root}/marketplace.json"))
+          assert m["name"] == "tokeneconomizer-zcode" == os.path.basename(root), m["name"]
+          entry = m["plugins"][0]
+          assert entry["source"] == "./tokeneconomizer" and entry["version"].count(".") == 2
+          for rel in (".zcode-plugin/plugin.json", "hooks/hooks.json",
+                      "scripts/te-hook", "lib/tokeneconomizer/plugin/hook.py"):
+              assert os.path.exists(f"{root}/tokeneconomizer/{rel}"), rel
+          print("bundle structure ok:", entry["version"])
+          EOF
+      - uses: webfactory/ssh-agent@v0.9.0
+        with:
+          ssh-private-key: ${{ secrets.CHANNEL_DEPLOY_KEY }}
+      - name: Publish to the channel repository
+        run: |
+          cd dist/tokeneconomizer-zcode
+          cp "$GITHUB_WORKSPACE/.github/channel-README.md" README.md
+          git init -q -b main
+          git add -A
+          git -c user.name="release-zcode" -c user.email="actions@users.noreply.github.com" \
+              commit -q -m "TokenEconomizer for ZCode 0.1.$GITHUB_RUN_NUMBER (from $(echo "$GITHUB_SHA" | cut -c1-7))"
+          git remote add channel git@github.com:iztou/tokeneconomizer-zcode.git
+          git push -q -f channel main
