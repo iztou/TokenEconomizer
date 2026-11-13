@@ -51,7 +51,7 @@ jobs:
         run: |
           # The validator needs the zcode CLI, which is not on the runner. The manifests
           # were validated at write time; this step is the bundle's own structural check.
-          python - - dist/tokeneconomizer-zcode <<'EOF'
+          python - dist/tokeneconomizer-zcode <<'EOF'
           import json, sys, os
           root = sys.argv[1]
           m = json.load(open(f"{root}/marketplace.json"))
