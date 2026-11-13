@@ -61,16 +61,19 @@ def ensure_launcher(env=None):
     arrive literally), and its shell exports none of them. So every hook session start writes
     this one-line launcher, the commands fall back to it, and a person on any host has a stable
     `te` to run. The plugin's location comes from the bootstrap (`TE_PLUGIN_ROOT`); the file is
-    rewritten only when it changes, as an installed copy's path does across updates."""
+    rewritten only when it changes, as an installed copy's path does across updates. The
+    launcher goes through `sh` and only needs the target readable: a ZCode marketplace
+    install can land without the executable bit (GitHub-source installs do; verified
+    2026-11-13), and `te` is a `#!/bin/sh` script either way."""
     import shlex
     env = os.environ if env is None else env
     plugin = env.get("TE_PLUGIN_ROOT")
     target = os.path.join(plugin, "scripts", "te") if plugin else ""
-    if not target or not os.access(target, os.X_OK):
+    if not target or not os.access(target, os.R_OK):
         return None
     path = launcher_path(env)
     body = ("#!/bin/sh\n# Written by the TokenEconomizer plugin at session start: its `te` "
-            "command line.\nexec %s \"$@\"\n" % shlex.quote(target))
+            "command line.\nexec sh %s \"$@\"\n" % shlex.quote(target))
     try:
         with open(path, encoding="utf-8") as fh:
             if fh.read() == body:
