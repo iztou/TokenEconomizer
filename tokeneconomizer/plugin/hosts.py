@@ -192,7 +192,7 @@ class Host:
         """Path of a trace `trace.load_trajectory` reads, for the finished session."""
         return transcript_path if transcript_path and os.path.exists(transcript_path) else None
 
-    def session_usage(self, transcript_path):
+    def session_usage(self, transcript_path, session=None):
         raise NotImplementedError
 
     def prompt_count(self, transcript_path):
@@ -334,7 +334,7 @@ class ClaudeCode(Host):
             return attended == "0"
         return str(env.get("CLAUDE_CODE_ENTRYPOINT", "")).startswith("sdk")
 
-    def session_usage(self, transcript_path):
+    def session_usage(self, transcript_path, session=None):
         return trace.claude_session_usage(transcript_path)
 
     def prompt_count(self, transcript_path):
@@ -414,7 +414,7 @@ class Codex(Host):
         n = trace.codex_rollout_to_exec(transcript_path, out)
         return out if n is not None else None
 
-    def session_usage(self, transcript_path):
+    def session_usage(self, transcript_path, session=None):
         return trace.codex_session_usage(transcript_path)
 
     def prompt_count(self, transcript_path):
@@ -455,7 +455,7 @@ class Pi(Host):
     def prompt_count(self, transcript_path):
         return trace.pi_prompt_count(transcript_path)
 
-    def session_usage(self, transcript_path):
+    def session_usage(self, transcript_path, session=None):
         return trace.pi_session_usage(transcript_path)
 
 
@@ -497,7 +497,7 @@ class OpenCode(Host):
     def prompt_count(self, transcript_path):
         return trace.opencode_prompt_count(transcript_path)
 
-    def session_usage(self, transcript_path):
+    def session_usage(self, transcript_path, session=None):
         return trace.opencode_session_usage(transcript_path)
 
     # opencode has the session a second or so after it ends (2.2.5), so it is asked again.
@@ -691,7 +691,7 @@ class Cursor(Host):
     def prompt_count(self, transcript_path):
         return trace.cursor_prompt_count(transcript_path)
 
-    def session_usage(self, transcript_path):
+    def session_usage(self, transcript_path, session=None):
         return {}
 
     def settle(self, transcript_path):
@@ -794,7 +794,7 @@ class Hermes(Host):
     def prompt_count(self, transcript_path):
         return trace.hermes_prompt_count(transcript_path)
 
-    def session_usage(self, transcript_path):
+    def session_usage(self, transcript_path, session=None):
         return trace.hermes_session_usage(transcript_path)
 
 
@@ -970,7 +970,7 @@ class Antigravity(Host):
     def prompt_count(self, transcript_path):
         return trace.antigravity_prompt_count(transcript_path)
 
-    def session_usage(self, transcript_path):
+    def session_usage(self, transcript_path, session=None):
         return trace.antigravity_session_usage(transcript_path)
 
 
@@ -1121,7 +1121,7 @@ class Grok(Host):
     def prompt_count(self, transcript_path):
         return trace.grok_prompt_count(transcript_path)
 
-    def session_usage(self, transcript_path):
+    def session_usage(self, transcript_path, session=None):
         return trace.grok_session_usage(transcript_path)
 
 
@@ -1166,7 +1166,7 @@ class Copilot(Host):
         resp = _failure_response(p) or p.get("tool_result")
         return str(p.get("tool_name") or ""), args, response_text(resp), _exit_code(resp)
 
-    def session_usage(self, transcript_path):
+    def session_usage(self, transcript_path, session=None):
         return trace.copilot_session_usage(transcript_path)
 
     def prompt_count(self, transcript_path):
@@ -1283,7 +1283,7 @@ class Droid(Host):
         n = trace.droid_session_to_claude(transcript_path, out)
         return out if n is not None else None
 
-    def session_usage(self, transcript_path):
+    def session_usage(self, transcript_path, session=None):
         return trace.droid_session_usage(transcript_path)
 
     def prompt_count(self, transcript_path):
@@ -1317,9 +1317,219 @@ class Droid(Host):
         return folder == os.path.abspath(root).replace("\\", "-").replace("/", "-")
 
 
+class Zcode(Host):
+    """ZCode (the ZCode desktop app and its `zcode-cli`), through `plugin/.zcode-plugin/`.
+
+    ZCode speaks the Claude hook contract -- JSON on stdin with `session_id`, `cwd`,
+    `hook_event_name`; JSON on stdout -- with Claude's PascalCase events and its own set: seven
+    are documented (`SessionStart`, `UserPromptSubmit`, `PreToolUse`, `PermissionRequest`,
+    `PostToolUse`, `PostToolUseFailure`, `Stop`) and there is NO `SessionEnd`. The plugin
+    registers five (a `PreToolUse` or `PermissionRequest` hook is nothing it needs, and the
+    fewer registered the smaller the surface of the strict output schema); a conversation is
+    folded by the next session start in its repository once it has been quiet for
+    `fold.STALE_S`, exactly as on the Antigravity CLI.
+
+    What else differs, each with its evidence:
+
+      * The session body is not a file the hook names: every conversation lives as rows of the
+        sqlite database `~/.zcode/cli/db/db.sqlite` (`~/.zcode/v2/db.sqlite` stays empty on
+        current installs; `trace.zcode` reads both). The fold exports it as Claude transcript
+        lines (`complete`, `trace.zcode_session_to_claude`), and prices it from the
+        `model_usage` table (`trace.zcode_session_usage`). The database is also the history
+        import's source (`keeps_history`): the plugin lists its earlier sessions and exports
+        each on demand, so `te history import` folds a repository's sessions from before the
+        plugin, like Claude Code's own logs.
+      * A hook's output schema is strict: an unknown key rejects the whole output. A
+        `systemMessage` is not a channel to the person either -- the runtime pushes it into
+        the conversation's injected contexts like any `additionalContext` -- so `notice`
+        answers empty and the still-stuck notice goes through the model (`relays_notices`), as
+        on Droid. Context is injected as Claude's nested `hookSpecificOutput.additionalContext`
+        (verified in the runtime: both that form, with the exact event name, and a top-level
+        `additionalContext` are accepted; the nested one ships).
+      * Tool names are Claude's (`Bash`, `Read`, `Write`, `Edit`). `Agent` is read as `Task`
+        and `ApplyPatch` as `Edit` (its patch, like Codex's, names the files).
+      * MCP tools are lazy-loaded here, so tool pruning is not available: `denylist.supports`
+        says so, and the controller writes nothing.
+      * The plugin's own model calls run `zcode -p --json` with the acting tools removed
+        (`sidecall.zcode_call`), off until `zcode_sidecall` is set: a call carries ZCode's
+        whole base prompt (~275k input tokens, none cached) and writes a session of its own.
+    """
+    name = "zcode"
+    # No verified channel reaches the person, so the model passes notices on; context goes in
+    # at SessionStart, where it persists for the conversation.
+    prompt_context = False
+    relays_notices = True
+    interrupt = "Press Esc to interrupt it."
+    end_run = "Press Ctrl+C to end the run."
+    EXPORT_DIR = "zcode-sessions"
+    # A session whose database rows cannot be read is retried at each start in its repository
+    # for this long, then folded as unreadable: the database may be busy, and the session may
+    # have been pruned -- it should not be retried for ever (as on Hermes).
+    FOLD_RETRY_S = 7 * 86400
+
+    def notice(self, text):
+        # The output schema is strict and no display channel is verified; keep the answer to
+        # the keys that matter. The controller relays an abort through the model when
+        # `relays_notices` is set.
+        return {}
+
+    def env_session_id(self, env):
+        # `CLAUDE_SESSION_ID` is the template variable ZCode documents for hook commands
+        # (hooks.json format is Claude Code's); whether the hook shell also exports it is a
+        # probe question, so `ZCODE_SESSION_ID` is read first where a launcher sets it.
+        return str(env.get("TE_SESSION_ID") or env.get("ZCODE_SESSION_ID")
+                   or env.get("CLAUDE_SESSION_ID") or "")
+
+    def headless(self, env, transcript=None):
+        # ZCode publishes no mode marker on the hook's environment; a desktop session is the
+        # default, and the wrong guess only changes the wording of an abort notice.
+        return False
+
+    def tool_call(self, p):
+        name, args, text, code = super().tool_call(p)
+        low = name.lower()
+        if low == "agent":
+            return "Task", args, text, code
+        if low in ("applypatch", "apply_patch"):
+            patch = next((v for v in (args.get("input"), args.get("patch"), args.get("command"))
+                          if isinstance(v, str)), "")
+            paths = _PATCH_FILE_RE.findall(patch)
+            return "edit", {"path": paths[0] if paths else "", "paths": paths}, text, code
+        return name, args, text, code
+
+    def session_state(self, env):
+        # A `te fold` runs in a shell whose environment is not the hook's: the database
+        # override rides the session record, as Hermes carries its home ("" is no override).
+        return {"zcode_db": str(env.get("ZCODE_DB_PATH") or "")}
+
+    def prepare(self, payload, env):
+        # The payload's transcript_path is a temp copy ZCode writes for this one hook call and
+        # deletes soon after; the session body lives in the database and exports under the
+        # state root. Store that path in the record (as Cursor stores its spool), so a later
+        # fold reads a path that still means something even before it is written.
+        p = dict(payload or {})
+        sid = str(p.get("session_id") or "")
+        if re.fullmatch(r"sess_[\w-]+", sid):
+            from .paths import state_root
+            p["transcript_path"] = os.path.join(
+                state_root(env), self.EXPORT_DIR, f"{os.path.basename(sid)}.jsonl")
+        return p
+
+    # -- the finished session, in the shapes the mechanisms read --------------------------
+    def _con(self, session=None):
+        """The database a session's rows are read from: the override its record carried (set
+        from the first hook's environment), else the environment's, else the default paths."""
+        session = session or {}
+        override = session.get("zcode_db") if isinstance(session.get("zcode_db"), str) else ""
+        return trace.zcode_connect({"ZCODE_DB_PATH": override} if override else None)
+
+    def _export(self, path, cwd=None, session=None):
+        """`path` as a Claude transcript copy of the session, exported from the database if it
+        is not on disk yet. Returns the path, or None when the session has no rows (an unknown
+        id, an unreadable database)."""
+        sid = os.path.basename(path or "")[:-len(".jsonl")]
+        if not path or not re.fullmatch(r"sess_[\w-]+", sid):
+            return None
+        if not os.path.exists(path):
+            con = self._con(session)
+            if con is None:
+                return None
+            try:
+                if cwd is None:
+                    cwd = trace.zcode_session_directory(con, sid)
+                os.makedirs(os.path.dirname(path), mode=0o700, exist_ok=True)
+                if trace.zcode_session_to_claude(con, sid, cwd, path) is None:
+                    return None
+            except OSError:
+                return None
+            finally:
+                con.close()
+        return path
+
+    def complete(self, transcript_path, session_id, cwd=None, session=None):
+        """The session exported from ZCode's database as Claude transcript lines, written under
+        the state root (`trace.zcode_session_to_claude`). The copy stays as it was if the rows
+        cannot be read; with no copy either the fold waits, up to `FOLD_RETRY_S`: the database
+        may be busy, or this process a `te fold` in a shell against a pruned session.
+
+        A `transcript_path` from a session record is NOT where the body lives: the hook's
+        payload names a temp copy for that one hook call (its basename never names the
+        session), so the export path is computed from the session id alone."""
+        from .paths import state_root
+        if not re.fullmatch(r"sess_[\w-]+", session_id or ""):
+            return transcript_path
+        path = os.path.join(state_root(), self.EXPORT_DIR, f"{session_id}.jsonl")
+        if self._export(path, cwd, session) is not None:
+            return path
+        if time.time() - self.last_active(path, session) < self.FOLD_RETRY_S:
+            raise FoldLater(session_id)
+        return path
+
+    def last_active(self, transcript_path, session):
+        """A running session has no log of its own to date, but every hook saves its state."""
+        return float(session.get("updated") or session.get("started") or 0)
+
+    def mechanism_trace(self, transcript_path, workdir):
+        # `complete` already wrote Claude transcript lines; the fold reads them as they are.
+        return transcript_path if transcript_path and os.path.exists(transcript_path) else None
+
+    def prompt_count(self, transcript_path):
+        # The exported copy is Claude-shaped, so Claude's readers count its prompts.
+        return trace.claude_prompt_count(self._export(transcript_path) or "")
+
+    def session_usage(self, transcript_path, session=None):
+        """The session's `model_usage` totals, keyed by the exported copy's file name. The
+        database is the one the session record names -- the same source `complete` exported
+        the log from -- so a fold in a shell without the hook's environment still prices the
+        session from the rows it was read from."""
+        sid = os.path.basename(transcript_path or "")[:-len(".jsonl")]
+        con = self._con(session)
+        if con is None:
+            return {"input_tokens": None, "cache_read_input_tokens": None,
+                    "cache_creation_input_tokens": None, "output_tokens": None,
+                    "requests": 0, "model": None}
+        try:
+            return trace.zcode_session_usage(con, sid)
+        finally:
+            con.close()
+
+    # -- the history import --------------------------------------------------------------
+    keeps_history = True
+
+    def history(self, env, extra_dirs=()):
+        """Every session in the database, oldest first; sub-workflow sessions (a `parent_id`)
+        are left out: they are part of the session that spawned them, as Droid's subagents
+        are. The rows name their export under the state root, written on demand (by
+        `log_head`, `prompt_count`, `prompt_turns`, or the fold's `complete`), since the
+        database holds no files. A non-default database reaches here through `env`."""
+        from .paths import state_root
+        rows = []
+        for row in trace.zcode_sessions(env):
+            if row.get("parent"):
+                continue
+            sid = row["id"]
+            rows.append({"session_id": sid,
+                         "folder": trace.claude_project_folder(row.get("directory")),
+                         "path": os.path.join(state_root(env), self.EXPORT_DIR,
+                                              f"{sid}.jsonl"),
+                         "mtime": row["mtime"], "size": row["size"]})
+        return rows
+
+    def log_head(self, path):
+        # The export carries each line's `cwd`, `sessionId` and `timestamp`, so Claude Code's
+        # head reader (which dates the session by its first `timestamp`) reads it as it is.
+        return trace.claude_log_head(self._export(path) or path)
+
+    def safe_session_id(self, sid):
+        return trace.zcode_safe_session_id(sid)
+
+    def prompt_turns(self, path):
+        return trace.claude_prompt_turns(self._export(path) or path)
+
+
 HOSTS = {"claude": ClaudeCode, "codex": Codex, "copilot": Copilot, "droid": Droid,
          "opencode": OpenCode, "pi": Pi, "cursor": Cursor, "hermes": Hermes, "grok": Grok,
-         "antigravity": Antigravity}
+         "antigravity": Antigravity, "zcode": Zcode}
 
 
 def default_host(env=None, recent=None):
@@ -1342,6 +1552,10 @@ def default_host(env=None, recent=None):
     # inside Droid is read as its own host.
     if env.get("FACTORY_SESSION_ID") or env.get("DROID_PLUGIN_ROOT"):
         return "droid"
+    # ZCode names its session id for hook commands (`${CLAUDE_SESSION_ID}`); no other agent
+    # exports that exact name (Claude Code's is `CLAUDE_CODE_SESSION_ID`).
+    if env.get("ZCODE_SESSION_ID") or env.get("CLAUDE_SESSION_ID"):
+        return "zcode"
     return recent if recent in HOSTS else "claude"
 
 
@@ -1372,6 +1586,14 @@ def detect(payload, env=None, hint=None):
     # from inside another agent is still Droid's.
     if "/.factory/sessions/" in sp or (not tp and (env or {}).get("DROID_PLUGIN_ROOT")):
         return Droid()
+    # ZCode names its sessions `sess_...` and keeps them under `.zcode`; its plugin hooks pass
+    # `--host` anyway, so this is the fallback (a Claude Code session id is a bare UUID). Hooks
+    # inherit the parent's environment, so the environment decides only where no transcript
+    # names the host.
+    if ("/.zcode/" in sp or str((payload or {}).get("session_id") or "").startswith("sess_")
+            or (not tp and any((env or {}).get(k)
+                               for k in ("ZCODE_SESSION_ID", "CLAUDE_SESSION_ID")))):
+        return Zcode()
     # Claude Code always sends a transcript path; Copilot sends none before Stop, and marks its
     # hook processes. (Hooks inherit the parent's environment, so the marker alone would also
     # tag a Claude Code session started from inside Copilot -- hence the transcript test first.)

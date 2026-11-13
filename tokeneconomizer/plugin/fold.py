@@ -511,7 +511,7 @@ def fold_locked(ctx, session_id, transcript_path=None, imported=False, span=None
                 schedule_pending(ctx)
             if not imported:
                 ctx.host.settle(transcript)
-            usage = ctx.host.session_usage(transcript)
+            usage = ctx.host.session_usage(transcript, sess)
             eff, priced_by = accounting.effective(usage)
             record.update({k: usage.get(k) for k in (
                 "model", "requests", "input_tokens", "cache_read_input_tokens",

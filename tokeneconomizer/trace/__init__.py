@@ -7,7 +7,7 @@ here and nowhere else:
                   `call_cwds`, `tool_usage`, `strip_rtk_prefix`;
   * `catalog`  -- the tool list a session loaded, from whichever source the agent publishes;
   * `antigravity`, `claude`, `codex`, `copilot`, `cursor`, `droid`, `grok`, `hermes`,
-                  `opencode`, `pi` -- each agent's own session file: usage, metadata,
+                  `opencode`, `pi`, `zcode` -- each agent's own session file: usage, metadata,
                   prompt-turns, and the conversions that let the readers above handle it.
 
 Stdlib only.
@@ -42,6 +42,10 @@ from .opencode import (opencode_prompt_count, opencode_run_reply, opencode_sessi
                        opencode_session_to_claude, opencode_session_usage)
 from .pi import (pi_active_branch, pi_json_reply, pi_prompt_count, pi_session_header,
                  pi_session_to_claude, pi_session_usage)
+from .zcode import (claude_tool_name as zcode_claude_tool_name, zcode_connect, zcode_db_paths,
+                    zcode_home, zcode_messages, zcode_prompt_count, zcode_safe_session_id,
+                    zcode_session_directory, zcode_session_to_claude, zcode_session_usage,
+                    zcode_sessions)
 
 __all__ = [
     "RTK_PREFIX_RE", "call_cwds", "load_trajectory", "strip_rtk_prefix", "tool_usage",
@@ -70,4 +74,8 @@ __all__ = [
     "opencode_session_to_claude", "opencode_session_usage",
     "pi_active_branch", "pi_json_reply", "pi_prompt_count", "pi_session_header",
     "pi_session_to_claude", "pi_session_usage",
+    "zcode_claude_tool_name", "zcode_connect", "zcode_db_paths", "zcode_home",
+    "zcode_messages", "zcode_prompt_count", "zcode_safe_session_id",
+    "zcode_session_directory", "zcode_session_to_claude", "zcode_session_usage",
+    "zcode_sessions",
 ]
